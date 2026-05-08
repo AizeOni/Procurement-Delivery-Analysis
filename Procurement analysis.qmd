@@ -1,0 +1,291 @@
+---
+title: "Procurement Delivery Performance Analysis"
+author: "Aizehinomon Oniha"
+date: today
+format:
+  html:
+    theme: flatly
+    toc: true
+    code-fold: true
+    self-contained: true
+---
+
+```{r, include=FALSE}
+knitr::opts_chunk$set(echo=TRUE, warning=FALSE, message=FALSE)
+```
+
+# Executive Summary
+
+This case study examines the factors affecting procurement delievry performance at Petrohawk Centrum Limited, an oil and gas servicing company. The business problem is the occurence of late late deliveries, which can delay project executive, increase costs and reduced client satisfaction. The dataset collected contains 100 purchase order observation, including purchase order dates, prodcut/item category, vendorm supplier source, quantity, unit price, revenue/order value, planned delievry days and delivery status. 
+
+The analysis applies the five required Case study 1 techniques: Exploratory Data Analysis EDA, Visualization, Hypothesis testing, Correlation Analysis and Regression as specified in the assessment brief. Initial review of the data shows that 72% of deliveries were on time while 28% were late. Late delievries were more common among international suppliers, higher-value orders, larger qunatities and categories such as packaging, textile/linen and medical equipment. 
+
+The study recommends a data-driven supplier performance review system, tighter montioring of high risk item catorgories and improved lead-time planning for international and high-value procurement orders.
+
+# Professional Disclosure
+
+**Job Title:** Procurement Manager | **Organisation:** Petrohawk Centrum Limited | **Sector:** Oil and Gas Services, Lagos
+
+**EDA:** Exploratory Data Analysis is operationally because it helps me understand ther basic structure and behavior of Petrohawk's procurement data before making decisions. Through EDA, I can identify the number of late and on-time deliveries, average planned delivery days, high-value orders, and possibly data quality issues. In procurement, this first step in moving from vendor/suppier issues to actual evidence-based decision making.
+
+**Visualisation:** Data visualization is useful because procurement performance needs to be communicated clearly to management, project teams and sometimes clients. Charts showing late deliveries by vendors, item category, source, or planned delivery days make it easier to identify patterns quickly. Instead of presenting raw tables, visualization helps management see which supplier or categories require closer monitoring and where operational risk is concentrated.
+
+**Hypothesis Testing:** Hypothesis testing is relevant because it allows me to move beyond observation and test whether differences in procurement performance are statistically meaningful. For example, I can test whether international suppliers have a significantly higher late-delivery rate than local suppliers, or whether planned delivery days differ between late or on-time orders. This supports stronger supplier evaluation and reduces reliance on guess work.
+
+**Correlation Analysis:** Correlation analysis helps me identify relationships between procurement variables such as quantity, unit price, order value, planned delivery days and delivery performance. In my work, this is useful for spotting whether larger or more expensive orders are associated with longer delivery timelines or higher delay risk. While correlation does not prove causation, it gives management early warning signals for procurement planning. 
+
+**Logistic Regression:** This helps estimate how different procurement factors influence delivery outcomes when considered together. This is useful in building a more disciplined follow-up system where high-risk purchase orders are flagged early before thye become operational problems.
+
+# Data Collection
+
+**Source:** Internal procurement records, Petrohawk Centrum Limited, Lagos.
+**Sample:** 100 PO line items, 2021-2026.
+**Variables:** PO Date, Item Category, Supplier Source, Quantity, Unit Price, Revenue, Planned Delivery Days, Delivery Status.
+**Ethics:** No PII. Shared with organisational approval for academic use only.
+
+# Analysis
+
+```{r main}
+library(readxl)
+library(ggplot2)
+library(ggcorrplot)
+library(effectsize)
+library(patchwork)
+library(knitr)
+library(kableExtra)
+library(lubridate)
+
+# LOAD
+raw <- read_excel("/Users/aizeoniha/Library/CloudStorage/OneDrive-Personal/MBA OD/YEAR 2/Data Analytics 2/Exam/DA Exam/Data for DA Exam.xlsx")
+raw <- raw[, !startsWith(names(raw), "...")]
+
+# RENAME
+names(raw) <- c("PO_DATE","ITEM_ID","ITEM_CATEGORY","VENDOR","SOURCE",
+                "QUANTITY","UNIT_PRICE","REVENUE","PLANNED_DAYS","DELIVERY_STATUS")
+
+# CLEAN
+raw$PO_DATE         <- as.Date(as.numeric(raw$PO_DATE), origin="1899-12-30")
+raw$DELIVERY_STATUS <- trimws(raw$DELIVERY_STATUS)
+raw$SOURCE          <- trimws(raw$SOURCE)
+raw$DELIVERY_STATUS <- ifelse(grepl("on.time", raw$DELIVERY_STATUS, ignore.case=TRUE), "On-time", "Late")
+raw$SOURCE          <- ifelse(grepl("local", raw$SOURCE, ignore.case=TRUE), "Local", "International")
+raw$ITEM_CATEGORY   <- gsub("Medical Equipments","Medical Equipment", trimws(raw$ITEM_CATEGORY))
+raw$LATE            <- ifelse(raw$DELIVERY_STATUS=="Late", 1, 0)
+raw$LOG_PRICE       <- log1p(raw$UNIT_PRICE)
+raw$LOG_REV         <- log1p(raw$REVENUE)
+raw$LOG_QTY         <- log1p(raw$QUANTITY)
+raw$PO_MONTH        <- floor_date(raw$PO_DATE, "month")
+raw$DELIVERY_STATUS <- factor(raw$DELIVERY_STATUS, levels=c("On-time","Late"))
+raw$SOURCE          <- factor(raw$SOURCE, levels=c("Local","International"))
+
+cat("Rows:", nrow(raw), "| Cols:", ncol(raw), "
+")
+cat("Missing values:", sum(is.na(raw)), "
+")
+cat("Duplicates:", sum(duplicated(raw)), "
+")
+```
+
+## Summary Statistics
+
+```{r stats}
+kable(summary(raw[,c("QUANTITY","UNIT_PRICE","REVENUE","PLANNED_DAYS")]),
+      caption="Summary Statistics") |>
+  kable_styling(bootstrap_options=c("striped","hover"), full_width=FALSE)
+
+kable(table(raw$DELIVERY_STATUS), col.names=c("Status","Count"),
+      caption="Delivery Status") |> kable_styling(full_width=FALSE)
+
+kable(table(raw$SOURCE), col.names=c("Source","Count"),
+      caption="Supplier Source") |> kable_styling(full_width=FALSE)
+```
+
+# EDA
+
+```{r eda}
+p1 <- ggplot(raw, aes(x=UNIT_PRICE/1e6)) +
+  geom_histogram(fill="#2d2d6b",bins=30,color="white") +
+  labs(title="Unit Price",x="NGN millions",y="Count") + theme_minimal()
+
+p2 <- ggplot(raw, aes(x=LOG_PRICE)) +
+  geom_histogram(fill="#d42b2b",bins=30,color="white") +
+  labs(title="Log Unit Price",x="log(price+1)",y="Count") + theme_minimal()
+
+p3 <- ggplot(raw, aes(x=QUANTITY)) +
+  geom_histogram(fill="#2d2d6b",bins=30,color="white") +
+  labs(title="Quantity",x="Units",y="Count") + theme_minimal()
+
+p4 <- ggplot(raw, aes(x=factor(PLANNED_DAYS))) +
+  geom_bar(fill="#2d2d6b",color="white") +
+  labs(title="Planned Delivery Days",x="Days",y="Count") + theme_minimal()
+
+(p1+p2)/(p3+p4)
+```
+
+# Visualisation
+
+```{r vis1}
+ggplot(raw, aes(x=SOURCE, fill=DELIVERY_STATUS)) +
+  geom_bar(position="fill",color="white") +
+  scale_fill_manual(values=c("On-time"="#2d2d6b","Late"="#d42b2b")) +
+  scale_y_continuous(labels=scales::percent) +
+  labs(title="Plot 1: Delivery by Supplier Source",
+       x="Source",y="Proportion",fill="Status") +
+  theme_minimal(base_size=13)
+```
+
+```{r vis2}
+agg <- aggregate(LATE ~ ITEM_CATEGORY, data=raw, FUN=mean)
+agg <- agg[order(agg$LATE),]
+ggplot(agg, aes(x=reorder(ITEM_CATEGORY,LATE), y=LATE, fill=LATE)) +
+  geom_col(show.legend=FALSE) +
+  scale_fill_gradient(low="#2d2d6b",high="#d42b2b") +
+  scale_y_continuous(labels=scales::percent) +
+  coord_flip() +
+  labs(title="Plot 2: Late Rate by Category",x="Category",y="Late Rate") +
+  theme_minimal(base_size=13)
+```
+
+```{r vis3}
+ggplot(raw, aes(x=DELIVERY_STATUS, y=PLANNED_DAYS, fill=DELIVERY_STATUS)) +
+  geom_boxplot(alpha=0.8) +
+  scale_fill_manual(values=c("On-time"="#2d2d6b","Late"="#d42b2b")) +
+  labs(title="Plot 3: Planned Days by Delivery Status",
+       x="Status",y="Planned Days") + theme_minimal(base_size=13)
+```
+
+```{r vis4}
+ggplot(raw, aes(x=DELIVERY_STATUS, y=REVENUE/1e6, fill=DELIVERY_STATUS)) +
+  geom_violin(alpha=0.7) + geom_jitter(width=0.1,alpha=0.4,size=1.5) +
+  scale_fill_manual(values=c("On-time"="#2d2d6b","Late"="#d42b2b")) +
+  scale_y_log10(labels=scales::comma) +
+  labs(title="Plot 4: Revenue by Delivery Status",
+       x="Status",y="Revenue NGN millions (log)") + theme_minimal(base_size=13)
+```
+
+```{r vis5}
+ts <- aggregate(cbind(Count=LATE) ~ PO_MONTH + DELIVERY_STATUS, data=raw,
+                FUN=length)
+ggplot(ts, aes(x=PO_MONTH, y=Count, color=DELIVERY_STATUS)) +
+  geom_line(linewidth=1.2) + geom_point(size=2.5) +
+  scale_color_manual(values=c("On-time"="#2d2d6b","Late"="#d42b2b")) +
+  labs(title="Plot 5: Delivery Performance Over Time",
+       x="Month",y="Orders",color="Status") + theme_minimal(base_size=13)
+```
+
+**Narrative:** International suppliers have much higher late rates. Medical Equipment and Packaging are most problematic. The 21-day lead time almost always results in late delivery. Late orders carry higher financial values.
+
+# Hypothesis Testing
+
+## H1: Supplier Source vs Delivery Status
+
+**H0:** No association between source and delivery status.
+**H1:** Source is significantly associated with delivery status.
+**Test:** Chi-squared.
+
+```{r hyp1}
+tab1 <- table(raw$SOURCE, raw$DELIVERY_STATUS)
+print(tab1)
+chi1 <- chisq.test(tab1)
+print(chi1)
+cv <- sqrt(chi1$statistic / (sum(tab1) * (min(dim(tab1))-1)))
+cat(sprintf("Cramers V: %.3f
+", cv))
+```
+
+**Interpretation:** P-value below 0.05 — we reject H0. Supplier source significantly predicts delivery status. This supports a local-first sourcing policy.
+
+## H2: Planned Days by Source
+
+**H0:** Mean planned days is equal for local and international suppliers.
+**H1:** International suppliers have significantly more planned days.
+**Test:** Welch t-test and Mann-Whitney.
+
+```{r hyp2}
+print(t.test(PLANNED_DAYS ~ SOURCE, data=raw))
+print(wilcox.test(PLANNED_DAYS ~ SOURCE, data=raw))
+cohens_d(PLANNED_DAYS ~ SOURCE, data=raw)
+```
+
+**Interpretation:** Both tests confirm p < 0.001. International orders require 21 days versus 2-5 days locally. Large effect confirmed by Cohen d.
+
+# Correlation Analysis
+
+```{r corr}
+cd <- raw[, c("PLANNED_DAYS","LOG_PRICE","LOG_REV","LOG_QTY","LATE")]
+names(cd) <- c("Planned Days","Log Price","Log Revenue","Log Qty","Late")
+cm <- cor(cd, method="pearson", use="complete.obs")
+ggcorrplot(cm, method="square", type="lower", lab=TRUE, lab_size=4,
+           colors=c("#d42b2b","white","#2d2d6b"),
+           title="Correlation Matrix: Procurement Variables")
+```
+
+```{r spearman}
+cs <- cor(cd, method="spearman", use="complete.obs")
+cat("Spearman correlations with Late:
+")
+print(sort(cs[,"Late"], decreasing=TRUE))
+```
+
+**Key findings:** Planned Days has the strongest correlation with lateness. Log Price is second strongest. Expensive international items are most at risk.
+
+# Logistic Regression
+
+```{r regression}
+model <- glm(LATE ~ SOURCE + LOG_PRICE + PLANNED_DAYS,
+             data=raw, family=binomial(link="logit"))
+print(summary(model))
+```
+
+```{r odds}
+kable(round(exp(cbind(OR=coef(model), confint(model))),3),
+      caption="Odds Ratios and 95% CI") |>
+  kable_styling(bootstrap_options=c("striped","hover"), full_width=FALSE)
+```
+
+```{r fit}
+null_m <- glm(LATE ~ 1, data=raw, family=binomial)
+cat(sprintf("McFadden R2: %.3f
+", 1-(logLik(model)/logLik(null_m))))
+
+raw$pred <- predict(model, type="response")
+raw$pred_class <- ifelse(raw$pred>=0.5,"Late","On-time")
+cm2 <- table(Predicted=raw$pred_class, Actual=raw$DELIVERY_STATUS)
+print(cm2)
+cat(sprintf("Accuracy: %.1f%%
+", 100*sum(diag(cm2))/sum(cm2)))
+
+ggplot(raw, aes(x=pred, fill=DELIVERY_STATUS)) +
+  geom_histogram(bins=25,position="identity",alpha=0.7,color="white") +
+  scale_fill_manual(values=c("On-time"="#2d2d6b","Late"="#d42b2b")) +
+  labs(title="Predicted Probability of Late Delivery",
+       x="Predicted Probability",y="Count",fill="Actual") +
+  theme_minimal(base_size=13)
+```
+
+**Interpretation:** International sourcing dramatically increases late delivery odds. Higher prices and longer lead times also increase risk significantly.
+
+# Integrated Findings
+
+All five techniques point to the same conclusion: delivery risk is driven by international sourcing and long lead times.
+
+**Recommendation:** (1) Enforce a 35-day minimum lead time for all international orders. (2) Adopt a local-first sourcing policy unless price differential justifies international procurement.
+
+# Limitations
+
+1. Only 100 records — expanding to 500+ would allow deeper analysis.
+2. Actual delivery dates not recorded — delay in days cannot be modelled.
+3. No stable vendor IDs — vendor-level scoring is not possible.
+4. Confounding factors such as customs delays not captured.
+
+# References
+
+Adi, B. (2026). *AI-powered business analytics.* Lagos Business School. https://markanalytics.online
+
+R Core Team. (2024). *R: A language and environment for statistical computing.* https://www.R-project.org/
+
+Wickham, H. et al. (2019). Welcome to the tidyverse. *JOSS, 4*(43). https://doi.org/10.21105/joss.01686
+
+# Appendix: AI Usage Statement
+
+Claude (Anthropic) assisted with code structure. All analytical decisions, interpretations, and recommendations were made independently by the author.
